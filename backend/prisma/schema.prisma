@@ -1,0 +1,261 @@
+// Prisma Schema for CRM Bank Sumut
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USER & AUTH ====================
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  name          String
+  role          Role     @default(VIEWER)
+  branchCode    String?
+  isActive      Boolean  @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+  
+  @@index([email])
+  @@index([role])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@index([token])
+  @@index([userId])
+}
+
+enum Role {
+  ADMIN
+  DIRECTOR
+  SUPERVISOR
+  AGENT
+  RM
+  MARKETING
+  COMPLIANCE
+  VIEWER
+}
+
+// ==================== CUSTOMER ====================
+model Customer {
+  id                String        @id @default(uuid())
+  cifNumber         String        @unique
+  name              String
+  email             String?
+  phone             String?
+  type              CustomerType  @default(INDIVIDUAL)
+  industry          String?
+  
+  // RFM Data
+  rfmSegment        RFMSegment    @default(POTENTIAL)
+  rfmScoreR         Int           @default(3)
+  rfmScoreF         Int           @default(3)
+  rfmScoreM         Int           @default(3)
+  
+  // Compliance
+  consentMarketing  ConsentStatus @default(GRANTED)
+  consentUpdatedAt  DateTime?
+  
+  // Status
+  status            AccountStatus @default(ACTIVE)
+  lastTransactionAt DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  
+  // Relations
+  accounts          Account[]
+  campaigns         CampaignTarget[]
+  cases             Case[]
+  auditLogs         AuditLog[]
+  
+  @@index([rfmSegment])
+  @@index([consentMarketing])
+  @@index([status])
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  CORPORATE
+  SME
+}
+
+enum RFMSegment {
+  CHAMPIONS
+  LOYAL
+  POTENTIAL
+  AT_RISK
+  HIBERNATING
+  LOST
+}
+
+enum ConsentStatus {
+  GRANTED
+  WITHDRAWN
+}
+
+enum AccountStatus {
+  ACTIVE
+  DORMANT
+  CLOSED
+}
+
+// ==================== ACCOUNT ====================
+model Account {
+  id            String   @id @default(uuid())
+  accountNumber String   @unique
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type          String
+  balance       Decimal  @default(0) @db.Decimal(18, 2)
+  currency      String   @default("IDR")
+  openedAt      DateTime @default(now())
+  status        AccountStatus @default(ACTIVE)
+  
+  @@index([customerId])
+  @@index([status])
+}
+
+// ==================== CAMPAIGN ====================
+model Campaign {
+  id              String         @id @default(uuid())
+  name            String
+  description     String?
+  type            CampaignType
+  status          CampaignStatus @default(DRAFT)
+  targetSegments  RFMSegment[]
+  createdBy       String
+  approvedBy      String?
+  createdAt       DateTime       @default(now())
+  approvedAt      DateTime?
+  executedAt      DateTime?
+  completedAt     DateTime?
+  
+  // Analytics (computed)
+  totalEligible   Int?
+  totalSent       Int?
+  totalOpened     Int?
+  totalConverted  Int?
+  
+  targets         CampaignTarget[]
+  
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CampaignTarget {
+  id          String   @id @default(uuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  status      TargetStatus @default(PENDING)
+  sentAt      DateTime?
+  openedAt    DateTime?
+  clickedAt   DateTime?
+  convertedAt DateTime?
+  
+  @@unique([campaignId, customerId])
+  @@index([campaignId])
+  @@index([customerId])
+}
+
+enum CampaignType {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum CampaignStatus {
+  DRAFT
+  APPROVED
+  EXECUTING
+  EXECUTED
+  COMPLETED
+  CANCELLED
+}
+
+enum TargetStatus {
+  PENDING
+  SENT
+  OPENED
+  CLICKED
+  CONVERTED
+  BOUNCED
+}
+
+// ==================== CASE (SERVICE) ====================
+model Case {
+  id          String     @id @default(uuid())
+  caseNumber  String     @unique
+  customerId  String
+  customer    Customer   @relation(fields: [customerId], references: [id])
+  category    String
+  priority    Priority   @default(MEDIUM)
+  status      CaseStatus @default(OPEN)
+  subject     String
+  description String?
+  assignedTo  String?
+  slaDeadline DateTime?
+  resolvedAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@index([customerId])
+  @@index([status])
+  @@index([priority])
+  @@index([assignedTo])
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CaseStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+// ==================== AUDIT LOG ====================
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  action      String
+  resource    String
+  resourceId  String?
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id])
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([customerId])
+  @@index([timestamp])
+}
